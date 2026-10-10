@@ -1,0 +1,289 @@
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap");
+@import "tailwindcss";
+
+:root {
+  /* Base colors */
+  --background: #ffffff;
+  --foreground: #171717;
+
+  /* Font families */
+  --font-title: "Poppins", sans-serif;
+  --font-body: "Inter", sans-serif;
+
+  /* Primary colors (green shades) */
+  --primary: #26a555; /* Main green color */
+  --primary-light: #3cb371;
+  --primary-dark: #1e8449;
+  --primary-button-dark: #25573c; /* Darker green for buttons */
+  --primary-button-dark-hover: #1e522f;
+  --primary-bg: #eefaf2; /* Light green background */
+
+  /* Secondary colors (red shades) */
+  --secondary: #e74c3c; /* Red for negative values */
+  --secondary-light: #f5b7b1;
+  --secondary-dark: #c0392b;
+
+  /* Neutral colors */
+  --neutral-50: #fafafa;
+  --neutral-100: #f5f5f5;
+  --neutral-200: #e5e5e5;
+  --neutral-300: #d4d4d4;
+  --neutral-400: #a3a3a3;
+  --neutral-500: #737373;
+  --neutral-600: #525252;
+  --neutral-700: #404040;
+  --neutral-800: #262626;
+  --neutral-900: #171717;
+
+  /* Accent colors for user roles */
+  --accent-green: #26a555; /* For Gestor role */
+  --accent-orange: #f39c12; /* For Funcionário role */
+  --accent-yellow: #f1c40f; /* For Contador role */
+
+  /* Status colors */
+  --success: #2ecc71;
+  --warning: #f39c12;
+  --error: #e74c3c;
+  --info: #3498db;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-title);
+}
+
+/* Color utility classes */
+.text-primary {
+  color: var(--primary);
+}
+.text-secondary {
+  color: var(--secondary);
+}
+.text-success {
+  color: var(--success);
+}
+.text-warning {
+  color: var(--warning);
+}
+.text-error {
+  color: var(--error);
+}
+.text-info {
+  color: var(--info);
+}
+
+.bg-primary {
+  background-color: var(--primary);
+}
+.bg-primary-light {
+  background-color: var(--primary-light);
+}
+.bg-primary-dark {
+  background-color: var(--primary-dark);
+}
+.bg-primary-bg {
+  background-color: var(--primary-bg);
+}
+.bg-secondary {
+  background-color: var(--secondary);
+}
+.bg-neutral-50 {
+  background-color: var(--neutral-50);
+}
+.bg-neutral-100 {
+  background-color: var(--neutral-100);
+}
+.bg-neutral-200 {
+  background-color: var(--neutral-200);
+}
+
+/* Role-based accent classes */
+.accent-gestor {
+  color: var(--accent-green);
+}
+.accent-funcionario {
+  color: var(--accent-orange);
+}
+.accent-contador {
+  color: var(--accent-yellow);
+}
+
+.bg-gestor {
+  background-color: var(--accent-green);
+}
+.bg-funcionario {
+  background-color: var(--accent-orange);
+}
+.bg-contador {
+  background-color: var(--accent-yellow);
+}
+
+/* Button styles */
+.btn-primary {
+  background-color: var(--primary);
+  color: white;
+  border-radius: 0.25rem;
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+}
+
+.btn-primary:hover {
+  background-color: var(--primary-dark);
+}
+
+.btn-outline {
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  background-color: transparent;
+  border-radius: 0.25rem;
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+}
+
+.btn-outline:hover {
+  background-color: var(--primary-bg);
+}
+
+/* Card and container styles */
+.card {
+  background-color: var(--background);
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  padding: 1rem;
+}
+
+/* Number formatting for financial values */
+.value-positive {
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.value-negative {
+  color: var(--secondary);
+  font-weight: 500;
+}
+
+.leaflet-pane,
+.leaflet-control,
+.leaflet-top,
+.leaflet-bottom {
+  z-index: 2;
+}
+
+/* Custom animations for hero section */
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Login page entrance animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.5s ease-out;
+}
+
+.animate-slideUp {
+  animation: slideUp 0.6s ease-out;
+}
+
+/* Game-style loading bar stripes (extratos/relatórios) */
+@keyframes loadingStripes {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 1rem 0;
+  }
+}
+
+.animate-loading-stripes {
+  animation: loadingStripes 0.7s linear infinite;
+}
+
+/* Live 3D tumbling icon for summary card icons (client purchases dashboard) */
+.icon-3d-wrapper {
+  perspective: 400px;
+}
+
+/* Tilts on both axes but never reaches 90deg, so the flat icon never
+   collapses into an edge-on line — it always reads as a solid shape. */
+@keyframes icon3DSpin {
+  0% {
+    transform: rotateX(0deg) rotateY(0deg);
+  }
+  25% {
+    transform: rotateX(18deg) rotateY(35deg);
+  }
+  50% {
+    transform: rotateX(0deg) rotateY(0deg);
+  }
+  75% {
+    transform: rotateX(-18deg) rotateY(-35deg);
+  }
+  100% {
+    transform: rotateX(0deg) rotateY(0deg);
+  }
+}
+
+.animate-icon-3d-spin {
+  animation: icon3DSpin 3.2s ease-in-out infinite;
+  transform-style: preserve-3d;
+}
+
+@keyframes valueFlash {
+  0% {
+    color: var(--primary-dark);
+  }
+  100% {
+    color: inherit;
+  }
+}
+
+.animate-value-flash {
+  animation: valueFlash 0.9s ease-out;
+}

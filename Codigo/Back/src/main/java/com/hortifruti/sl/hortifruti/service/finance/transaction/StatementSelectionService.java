@@ -1,0 +1,127 @@
+package com.hortifruti.sl.hortifruti.service.finance.transaction;
+
+import com.hortifruti.sl.hortifruti.model.finance.Bank;
+import com.hortifruti.sl.hortifruti.model.finance.Statement;
+import com.hortifruti.sl.hortifruti.model.finance.Transaction;
+import com.hortifruti.sl.hortifruti.repository.finance.StatementRepository;
+import java.time.LocalDate;
+import java.time.YearMonth;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+@Service
+@RequiredArgsConstructor
+public class StatementSelectionService {
+
+  private final StatementRepository statementRepository;
+
+  /**
+   * Busca o melhor statement que cobre o período solicitado para cada banco Prioriza statements que
+   * tenham transações completas do mês, mas se não houver, pega o que melhor cobre o período
+   */
+  public List<Statement> getBestStatementsForMonth(int month, int year) {
+    List<Statement> bestStatements = new ArrayList<>();
+
+    YearMonth yearMonth = YearMonth.of(year, month);
+    LocalDate startOfMonth = yearMonth.atDay(1);
+    LocalDate endOfMonth = yearMonth.atEndOfMonth();
+
+    Optional<Statement> bbStatement =
+        getBestStatementForPeriod(Bank.BANCO_DO_BRASIL, startOfMonth, endOfMonth);
+    bbStatement.ifPresent(bestStatements::add);
+
+    Optional<Statement> sicoobStatement =
+        getBestStatementForPeriod(Bank.SICOOB, startOfMonth, endOfMonth);
+    sicoobStatement.ifPresent(bestStatements::add);
+
+    return bestStatements;
+  }
+
+  private Optional<Statement> getBestStatementForPeriod(
+      Bank bank, LocalDate startDate, LocalDate endDate) {
+    List<Statement> bestCoverageStatements =
+        statementRepository.findBestCoverageStatementsForPeriod(bank, startDate, endDate);
+
+    if (!bestCoverageStatements.isEmpty()) {
+      Statement bestStatement = bestCoverageStatements.get(0);
+      return Optional.of(bestStatement);
+    }
+
+    List<Statement> statementsWithTransactions =
+        statementRepository.findStatementsWithTransactionsInPeriod(bank, startDate, endDate);
+
+    if (!statementsWithTransactions.isEmpty()) {
+      Statement statement = statementsWithTransactions.get(0);
+      return Optional.of(statement);
+    }
+
+    return statementRepository.findTopByBankOrderByCreatedAtDesc(bank);
+  }
+
+  private int countTransactionsInPeriod(
+      Statement statement, LocalDate startDate, LocalDate endDate) {
+    if (statement.getTransactions() == null) {
+      return 0;
+    }
+
+    return (int)
+        statement.getTransactions().stream()
+            .filter(
+                transaction -> {
+                  LocalDate transactionDate = transaction.getTransactionDate();
+                  return !transactionDate.isBefore(startDate) && !transactionDate.isAfter(endDate);
+                })
+            .count();
+  }
+
+  public List<Transaction> getTransactionsForPeriod(
+      Statement statement, LocalDate startDate, LocalDate endDate) {
+    if (statement.getTransactions() == null) {
+      return new ArrayList<>();
+    }
+
+    return statement.getTransactions().stream()
+        .filter(
+            transaction -> {
+              LocalDate transactionDate = transaction.getTransactionDate();
+              return !transactionDate.isBefore(startDate) && !transactionDate.isAfter(endDate);
+            })
+        .collect(Collectors.toList());
+  }
+
+  public String getStatementCoverageInfo(List<Statement> statements, int month, int year) {
+    StringBuilder info = new StringBuilder();
+    YearMonth yearMonth = YearMonth.of(year, month);
+    LocalDate startOfMonth = yearMonth.atDay(1);
+    LocalDate endOfMonth = yearMonth.atEndOfMonth();
+
+    info.append("Relatório de Cobertura dos Statements:\n");
+    info.append("Período solicitado: ")
+        .append(startOfMonth)
+        .append(" a ")
+        .append(endOfMonth)
+        .append("\n\n");
+
+    for (Statement statement : statements) {
+      int transactionsInPeriod = countTransactionsInPeriod(statement, startOfMonth, endOfMonth);
+      int totalTransactions =
+          statement.getTransactions() != null ? statement.getTransactions().size() : 0;
+
+      double coveragePercentage =
+          totalTransactions > 0 ? (double) transactionsInPeriod / totalTransactions * 100 : 0;
+
+      info.append("Statement: ").append(statement.getName()).append("\n");
+      info.append("Banco: ").append(statement.getBank()).append("\n");
+      info.append("Data de criação: ").append(statement.getCreatedAt().toLocalDate()).append("\n");
+      info.append("Transações no período: ").append(transactionsInPeriod).append("\n");
+      info.append("Total de transações: ").append(totalTransactions).append("\n");
+      info.append("Cobertura: ").append(String.format("%.1f%%", coveragePercentage)).append("\n\n");
+    }
+
+    return info.toString();
+  }
+}

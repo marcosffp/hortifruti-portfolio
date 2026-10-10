@@ -1,0 +1,251 @@
+"use client";
+
+import { API_BASE_URL_WITH_API_PREFIX } from "@/config/api";
+
+export interface BulkNotificationRequest {
+  files: File[];
+  clientIds: number[];
+  channels: string[]; // ["email", "whatsapp"]
+  destinationType: string; // "clientes" ou "contabilidade"
+  customMessage?: string;
+  // Campos financeiros para contabilidade
+  cardValue?: string;
+  cashValue?: string;
+}
+
+export interface BulkNotificationResponse {
+  success: boolean;
+  message: string;
+  totalSent: number;
+  totalFailed: number;
+  failedRecipients: string[];
+  authorizationUrl?: string;
+}
+
+function parseAuthorizationUrl(
+  message: string | undefined | null,
+): string | null {
+  if (!message) return null;
+  const match = message.match(/(https?:\/\/\S+)/);
+  return match ? match[1] : null;
+}
+
+export const bulkNotificationService = {
+  async sendBulkNotifications(
+    request: BulkNotificationRequest,
+  ): Promise<BulkNotificationResponse> {
+    try {
+      const headers: HeadersInit = {};
+
+      if (request.destinationType === "contabilidade") {
+        return await this.sendToAccounting(request, headers);
+      } else if (request.destinationType === "clientes") {
+        return await this.sendToClients(request, headers);
+      }
+
+      throw new Error("Tipo de destinatário inválido");
+    } catch (error) {
+      console.error("Falha ao enviar notificações:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Envia para contabilidade (apenas email)
+   */
+  async sendToAccounting(
+    request: BulkNotificationRequest,
+    headers: HeadersInit,
+  ): Promise<BulkNotificationResponse> {
+    const formData = new FormData();
+
+    request.files.forEach((file) => {
+      formData.append("files", file);
+    });
+
+    if (request.customMessage) {
+      formData.append("customMessage", request.customMessage);
+    }
+
+    if (request.cardValue) {
+      formData.append("cardValue", request.cardValue);
+    }
+    if (request.cashValue) {
+      formData.append("cashValue", request.cashValue);
+    }
+
+    // NÃO definir Content-Type - o browser define automaticamente com boundary correto
+    const response = await fetch(
+      `${API_BASE_URL_WITH_API_PREFIX}/notifications/accounting/generic-files`,
+      {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: formData,
+      },
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      const authorizationUrl = parseAuthorizationUrl(errorData?.message);
+      if (authorizationUrl) {
+        return {
+          success: false,
+          message: "É necessário autorizar o envio de emails novamente.",
+          totalSent: 0,
+          totalFailed: 1,
+          failedRecipients: ["Contabilidade"],
+          authorizationUrl,
+        };
+      }
+      throw new Error(
+        errorData?.message || `Erro ao enviar notificações: ${response.status}`,
+      );
+    }
+
+    const data = await response.json();
+    return {
+      success: data.success,
+      message: data.message || "Notificação enviada",
+      totalSent: data.success ? 1 : 0,
+      totalFailed: data.success ? 0 : 1,
+      failedRecipients: data.success ? [] : ["Contabilidade"],
+    };
+  },
+
+  /**
+   * Envia para clientes (email e/ou WhatsApp)
+   */
+  async sendToClients(
+    request: BulkNotificationRequest,
+    headers: HeadersInit,
+  ): Promise<BulkNotificationResponse> {
+    const results = {
+      totalSent: 0,
+      totalFailed: 0,
+      failedRecipients: [] as string[],
+    };
+
+    let channel = "EMAIL";
+    if (
+      request.channels.includes("email") &&
+      request.channels.includes("whatsapp")
+    ) {
+      channel = "BOTH";
+    } else if (request.channels.includes("whatsapp")) {
+      channel = "WHATSAPP";
+    }
+
+    for (const clientId of request.clientIds) {
+      try {
+        const formData = new FormData();
+
+        request.files.forEach((file) => {
+          formData.append("files", file);
+        });
+
+        formData.append("clientId", clientId.toString());
+        formData.append("channel", channel);
+
+        if (request.customMessage) {
+          formData.append("customMessage", request.customMessage);
+        }
+
+        const response = await fetch(
+          `${API_BASE_URL_WITH_API_PREFIX}/notifications/client/documents`,
+          {
+            method: "POST",
+            headers,
+            credentials: "include",
+            body: formData,
+          },
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => null);
+          const authorizationUrl = parseAuthorizationUrl(errorData?.message);
+          if (authorizationUrl) {
+            // Falha de autorização afeta todos os envios igualmente, não faz sentido
+            // continuar tentando cliente por cliente.
+            return {
+              success: false,
+              message: "É necessário autorizar o envio de emails novamente.",
+              totalSent: results.totalSent,
+              totalFailed: results.totalFailed + 1,
+              failedRecipients: [
+                ...results.failedRecipients,
+                `Cliente ID: ${clientId}`,
+              ],
+              authorizationUrl,
+            };
+          }
+          results.totalFailed++;
+          results.failedRecipients.push(`Cliente ID: ${clientId}`);
+          console.error(`Erro ao enviar para cliente ${clientId}:`, errorData);
+        } else {
+          results.totalSent++;
+        }
+      } catch (error) {
+        results.totalFailed++;
+        results.failedRecipients.push(`Cliente ID: ${clientId}`);
+        console.error(`Erro ao enviar para cliente ${clientId}:`, error);
+      }
+    }
+
+    const success = results.totalSent > 0;
+    const message = success
+      ? `${results.totalSent} notificação(ões) enviada(s) com sucesso${
+          results.totalFailed > 0 ? `, ${results.totalFailed} falhou(aram)` : ""
+        }`
+      : "Falha ao enviar todas as notificações";
+
+    return {
+      success,
+      message,
+      totalSent: results.totalSent,
+      totalFailed: results.totalFailed,
+      failedRecipients: results.failedRecipients,
+    };
+  },
+
+  async getAccountingRecipients(): Promise<string[]> {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL_WITH_API_PREFIX}/notifications/accounting/recipients`,
+        {
+          method: "GET",
+          credentials: "include",
+        },
+      );
+
+      if (!response.ok) return [];
+
+      return await response.json();
+    } catch (error) {
+      console.error("Falha ao buscar destinatários da contabilidade:", error);
+      return [];
+    }
+  },
+
+  async testService(): Promise<boolean> {
+    try {
+      const headers: HeadersInit = {
+        "Content-Type": "application/json",
+      };
+
+      const response = await fetch(
+        `${API_BASE_URL_WITH_API_PREFIX}/notifications/test`,
+        {
+          method: "GET",
+          headers,
+          credentials: "include",
+        },
+      );
+
+      return response.ok;
+    } catch (error) {
+      console.error("Falha ao testar serviço de notificações:", error);
+      return false;
+    }
+  },
+};

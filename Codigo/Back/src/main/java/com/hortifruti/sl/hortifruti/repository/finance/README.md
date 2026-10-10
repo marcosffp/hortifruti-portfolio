@@ -1,0 +1,9 @@
+# com.hortifruti.sl.hortifruti.repository.finance
+
+Repositórios de extratos bancários (`Statement`) e transações (`Transaction`) usados na conciliação bancária, importação de extratos e relatórios.
+
+| Arquivo | Tipo | Responsabilidade |
+| --- | --- | --- |
+| `StatementRepository.java` | `JpaRepository<Statement, Long>` | Entidade `Statement`. `findByBankAndCreatedAtBetween` lista extratos de um banco em um período; `findTopByBankOrderByCreatedAtDesc` busca o extrato mais recente de um banco; `findTopByBankAndOriginOrderByCreatedAtDesc` busca o extrato "atual" por banco e origem (`StatementOrigin`), usado para decidir se um período já foi processado; `findStatementsWithTransactionsInPeriod` e `findBestCoverageStatementsForPeriod` (`@Query`) localizam extratos com transações num período (o segundo prioriza o de maior cobertura); `findByCreatedAtBetween` e `findByCreatedAtBetweenWithTransactions` (`@Query` com `LEFT JOIN FETCH`) listam extratos por data de criação, o último já trazendo as transações carregadas. |
+| `TransactionRepository.java` | `JpaRepository<Transaction, Long>`, `JpaSpecificationExecutor<Transaction>` | Entidade `Transaction`. `findHashes` (`@Query`) filtra hashes já existentes (dedup de importação); `findAllCategories` (`@Query`) lista categorias distintas. Filtros por período/banco/tipo/categoria usados em relatórios, exportações e no endpoint paginado de listagem são compostos via `Specification` (ver `TransactionSpecifications`) sobre `JpaSpecificationExecutor`, em vez de um método `@Query` por combinação. |
+| `TransactionSpecifications.java` | Utilitário (`Specification<Transaction>` factory) | Predicados combináveis (`transactionDateBetween`, `createdAtBetween`, `statementBankEquals`) usados com `TransactionRepository#findAll(Specification, ...)` no lugar de métodos `@Query` fixos por combinação de filtro. |

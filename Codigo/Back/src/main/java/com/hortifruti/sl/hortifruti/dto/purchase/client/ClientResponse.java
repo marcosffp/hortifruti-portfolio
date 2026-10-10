@@ -1,0 +1,21 @@
+package com.hortifruti.sl.hortifruti.dto.purchase.client;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+
+public record ClientResponse(
+    Long id,
+    String clientName,
+    String nickname,
+    String email,
+    String phoneNumber,
+    String address,
+    String document,
+    boolean variablePrice,
+    String stateRegistration,
+    String stateIndicator,
+    String cideCode,
+    boolean onlyBillet,
+    boolean requiresPurchaseProof,
+    LocalDate lastPurchaseDate,
+    BigDecimal totalPurchaseValue) {}

@@ -1,0 +1,183 @@
+"use client";
+
+import { API_BASE_URL } from "@/config/api";
+import type {
+  ClientInfo,
+  ClientRequest,
+  ClientResponse,
+  ClientSelectionInfo,
+} from "@/types/clientType";
+import { getAuthHeaders } from "@/utils/httpUtils";
+
+export const clientService = {
+  async getAllClients(): Promise<ClientResponse[]> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/clients`, {
+        method: "GET",
+        headers: getAuthHeaders(),
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro ao buscar clientes: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error("Falha ao obter clientes:", error);
+      throw error;
+    }
+  },
+
+  async getClientById(id: number): Promise<ClientResponse> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/clients/${id}`, {
+        method: "GET",
+        headers: getAuthHeaders(),
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro ao buscar cliente: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error(`Falha ao obter cliente ${id}:`, error);
+      throw error;
+    }
+  },
+
+  async createClient(clientData: ClientRequest): Promise<ClientResponse> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/clients/register`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        credentials: "include",
+        body: JSON.stringify(clientData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.message || `Erro ao criar cliente: ${response.status}`,
+        );
+      }
+
+      const data = await response.json();
+      return data.client || data;
+    } catch (error) {
+      console.error("Falha ao criar cliente:", error);
+      throw error;
+    }
+  },
+
+  async updateClient(
+    id: number,
+    clientData: ClientRequest,
+  ): Promise<ClientResponse> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/clients/${id}`, {
+        method: "PUT",
+        headers: getAuthHeaders(),
+        credentials: "include",
+        body: JSON.stringify(clientData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(
+          errorData?.message || `Erro ao atualizar cliente: ${response.status}`,
+        );
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error(`Falha ao atualizar cliente ${id}:`, error);
+      throw error;
+    }
+  },
+
+  async deleteClient(id: number): Promise<void> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/clients/${id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro ao excluir cliente: ${response.status}`);
+      }
+    } catch (error) {
+      console.error(`Falha ao excluir cliente ${id}:`, error);
+      throw error;
+    }
+  },
+
+  async getClientByName(name: string): Promise<ClientResponse> {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/clients/name/${encodeURIComponent(name)}`,
+        {
+          method: "GET",
+          headers: getAuthHeaders(),
+          cache: "no-store",
+          credentials: "include",
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Erro ao buscar cliente por nome: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error(`Falha ao buscar cliente pelo nome ${name}:`, error);
+      throw error;
+    }
+  },
+
+  async getClientSummary(id: number): Promise<ClientInfo> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/clients/${id}/summary`, {
+        method: "GET",
+        headers: getAuthHeaders(),
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro ao buscar resumo do cliente: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error(`Falha ao obter resumo do cliente ${id}:`, error);
+      throw error;
+    }
+  },
+
+  async getAllClientsForSelection(): Promise<ClientSelectionInfo[]> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/clients/for-selection`, {
+        method: "GET",
+        headers: getAuthHeaders(),
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Erro ao buscar clientes para seleção: ${response.status}`,
+        );
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error("Falha ao obter clientes para seleção:", error);
+      throw error;
+    }
+  },
+};

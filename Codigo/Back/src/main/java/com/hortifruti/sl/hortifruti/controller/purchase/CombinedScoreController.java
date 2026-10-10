@@ -1,0 +1,103 @@
+package com.hortifruti.sl.hortifruti.controller.purchase;
+
+import com.hortifruti.sl.hortifruti.dto.common.MessageResponse;
+import com.hortifruti.sl.hortifruti.dto.purchase.CombinedScoreRequest;
+import com.hortifruti.sl.hortifruti.dto.purchase.CombinedScoreResponse;
+import com.hortifruti.sl.hortifruti.dto.purchase.GroupedProductResponse;
+import com.hortifruti.sl.hortifruti.dto.purchase.PurchaseImageResponse;
+import com.hortifruti.sl.hortifruti.dto.purchase.WildcardBilletRequest;
+import com.hortifruti.sl.hortifruti.dto.purchase.client.ClientLastGroupingResponse;
+import com.hortifruti.sl.hortifruti.service.purchase.CombinedScoreCancellationService;
+import com.hortifruti.sl.hortifruti.service.purchase.CombinedScorePhotoService;
+import com.hortifruti.sl.hortifruti.service.purchase.CombinedScoreService;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import java.util.List;
+import lombok.AllArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@AllArgsConstructor
+@RequestMapping("/combined-scores")
+@Tag(
+    name = "CombinedScore Management",
+    description = "Operações relacionadas ao gerenciamento de scores combinados")
+public class CombinedScoreController {
+
+  private final CombinedScoreService combinedScoreService;
+  private final CombinedScoreCancellationService combinedScoreCancellationService;
+  private final CombinedScorePhotoService combinedScorePhotoService;
+
+  @PostMapping("/create")
+  public ResponseEntity<MessageResponse> createCombinedScore(
+      @Valid @RequestBody CombinedScoreRequest request) {
+    combinedScoreService.createCombinedScore(request);
+    return ResponseEntity.ok(new MessageResponse("Agrupamento criado com sucesso."));
+  }
+
+  /**
+   * Cria um agrupamento avulso com o produto coringa (R$1/kg), para clientes configurados como
+   * "somente boleto".
+   */
+  @PostMapping("/create-wildcard-billet")
+  public ResponseEntity<Long> createWildcardBillet(
+      @Valid @RequestBody WildcardBilletRequest request) {
+    Long combinedScoreId = combinedScoreService.createWildcardCombinedScore(request);
+    return ResponseEntity.ok(combinedScoreId);
+  }
+
+  @GetMapping
+  public ResponseEntity<Page<CombinedScoreResponse>> listGroupings(
+      @RequestParam(required = false) Long clientId,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "20") int size) {
+
+    Pageable pageable = PageRequest.of(page, size);
+    Page<CombinedScoreResponse> response = combinedScoreService.listGroupings(clientId, pageable);
+    return ResponseEntity.ok(response);
+  }
+
+  @GetMapping("/last-per-client")
+  public ResponseEntity<List<ClientLastGroupingResponse>> getLastGroupingPerClient() {
+    return ResponseEntity.ok(combinedScoreService.getLastGroupingPerClient());
+  }
+
+  @DeleteMapping("/{id}")
+  public ResponseEntity<MessageResponse> cancelGrouping(@PathVariable Long id) {
+    combinedScoreCancellationService.cancelGrouping(id);
+    return ResponseEntity.ok(new MessageResponse("Agrupamento cancelado com sucesso."));
+  }
+
+  @PatchMapping("/confirm-payment/{id}")
+  public ResponseEntity<MessageResponse> confirmPayment(@PathVariable Long id) {
+    combinedScoreService.confirmPayment(id);
+    return ResponseEntity.ok(new MessageResponse("Pagamento confirmado com sucesso."));
+  }
+
+  @PatchMapping("/cancel-payment/{id}")
+  public ResponseEntity<MessageResponse> cancelPayment(@PathVariable Long id) {
+    combinedScoreService.cancelPayment(id);
+    return ResponseEntity.ok(new MessageResponse("Pagamento cancelado com sucesso."));
+  }
+
+  @GetMapping("/{id}/imagens")
+  public ResponseEntity<List<PurchaseImageResponse>> listImages(@PathVariable Long id) {
+    return ResponseEntity.ok(combinedScoreService.listImagesByCombinedScoreId(id));
+  }
+
+  /** Baixa o PDF com as fotos de comprovante das compras deste agrupamento, uma por página. */
+  @GetMapping("/{id}/fotos/pdf")
+  public ResponseEntity<byte[]> downloadPhotosPdf(@PathVariable Long id) {
+    return combinedScorePhotoService.getStoredPhotosPdf(id);
+  }
+
+  @GetMapping("/{id}/grouped-products")
+  public ResponseEntity<List<GroupedProductResponse>> getGroupedProductsByCombinedScoreId(
+      @PathVariable Long id) {
+    return ResponseEntity.ok(combinedScoreService.getGroupedProductsByCombinedScoreId(id));
+  }
+}
