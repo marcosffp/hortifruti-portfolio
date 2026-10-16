@@ -1,0 +1,260 @@
+import AdditionalDataModal from "@/components/modals/AdditionalDataModal";
+import ClientNumberModal from "@/components/modals/ClientNumberModal";
+import CombinedScoreImagesModal from "@/components/modals/CombinedScoreImagesModal";
+import ConfirmDeleteModal from "@/components/modals/ConfirmDeleteModal";
+import GroupedProductsModal from "@/components/modals/GroupedProductsModal";
+import SendGroupingDocumentsModal from "@/components/modals/SendGroupingDocumentsModal";
+import ShowBilletDataModal from "@/components/modals/ShowBilletDataModal";
+import ShowBilletModal from "@/components/modals/ShowBilletModal";
+import ShowInvoiceAndBilletModal from "@/components/modals/ShowInvoiceAndBilletModal";
+import ShowInvoiceDataModal from "@/components/modals/ShowInvoiceDataModal";
+import ShowInvoiceModal from "@/components/modals/ShowInvoiceModal";
+import WildcardBilletModal from "@/components/modals/WildcardBilletModal";
+import GameLoadingOverlay from "@/components/ui/GameLoadingOverlay";
+import type { ClientResponse } from "@/types/clientType";
+import type { InvoiceWithBilletResult } from "@/types/invoiceType";
+import type { ScoreModalState, ScoreWithBilletInfo } from "./types";
+
+export interface BilletResultModalState {
+  score: ScoreWithBilletInfo;
+  pdf: Blob;
+  clientNumber: string | null;
+  useStandardFileName?: boolean;
+}
+
+export interface InvoiceResultModalState {
+  score: ScoreWithBilletInfo;
+  pdf: Blob;
+}
+
+export interface InvoiceBilletResultModalState {
+  score: ScoreWithBilletInfo;
+  result: InvoiceWithBilletResult;
+}
+
+interface CombinedScoreModalsProps {
+  modal: ScoreModalState;
+  clientName: string | null;
+  client: ClientResponse | null;
+  onCloseModal: () => void;
+  isActionProcessing: (id: number) => boolean;
+  onConfirmDelete: (id: number) => void;
+  onConfirmWildcardBillet: (
+    number: string,
+    value: number,
+    dueDate?: string,
+  ) => void;
+  onConfirmClientNumber: (
+    groupId: number,
+    number: string,
+    dueDate?: string,
+    useStandardFileName?: boolean,
+  ) => void;
+  onConfirmAdditionalData: (
+    scoreId: number,
+    combinedFlow: boolean,
+    dadosAdicionais: string,
+  ) => void;
+  onRefetch: () => void;
+
+  // Modais de resultado assíncrono — ver comentário em CombinedScoresCards.tsx sobre por que
+  // ficam fora do discriminated union acima.
+  billetResultModal: BilletResultModalState | null;
+  onCloseBilletResult: () => void;
+  invoiceResultModal: InvoiceResultModalState | null;
+  onCloseInvoiceResult: () => void;
+  invoiceBilletResultModal: InvoiceBilletResultModalState | null;
+  onCloseInvoiceBilletResult: () => void;
+
+  isGenerating: boolean;
+}
+
+export default function CombinedScoreModals({
+  modal,
+  clientName,
+  client,
+  onCloseModal,
+  isActionProcessing,
+  onConfirmDelete,
+  onConfirmWildcardBillet,
+  onConfirmClientNumber,
+  onConfirmAdditionalData,
+  onRefetch,
+  billetResultModal,
+  onCloseBilletResult,
+  invoiceResultModal,
+  onCloseInvoiceResult,
+  invoiceBilletResultModal,
+  onCloseInvoiceBilletResult,
+  isGenerating,
+}: CombinedScoreModalsProps) {
+  return (
+    <>
+      {modal.type === "products" && (
+        <GroupedProductsModal
+          combinedScoreId={modal.score.id}
+          scoreNumber={modal.score.number}
+          onClose={onCloseModal}
+        />
+      )}
+
+      {modal.type === "images" && (
+        <CombinedScoreImagesModal
+          combinedScoreId={modal.score.id}
+          scoreNumber={modal.score.number}
+          clientName={clientName}
+          onClose={onCloseModal}
+        />
+      )}
+
+      {modal.type === "sendDocuments" && (
+        <SendGroupingDocumentsModal
+          open={true}
+          onClose={onCloseModal}
+          score={modal.score}
+          client={client}
+        />
+      )}
+
+      <ConfirmDeleteModal
+        open={modal.type === "deleteConfirm"}
+        onClose={onCloseModal}
+        confirmDisabled={
+          modal.type === "deleteConfirm"
+            ? isActionProcessing(modal.score.id)
+            : false
+        }
+        onConfirm={() => {
+          if (modal.type === "deleteConfirm") {
+            onConfirmDelete(modal.score.id);
+          }
+          onCloseModal();
+        }}
+        title={`Tem certeza que deseja deletar o agrupamento ${
+          modal.type === "deleteConfirm"
+            ? modal.score.number || modal.score.id
+            : ""
+        }? Esta ação não pode ser desfeita.`}
+      />
+
+      <WildcardBilletModal
+        open={modal.type === "wildcardBillet"}
+        onClose={onCloseModal}
+        onConfirm={(number, value, dueDate) => {
+          onCloseModal();
+          onConfirmWildcardBillet(number, value, dueDate);
+        }}
+      />
+
+      {billetResultModal && (
+        <ShowBilletModal
+          isOpen={true}
+          onClose={onCloseBilletResult}
+          billetData={billetResultModal.pdf}
+          scoreNumber={
+            billetResultModal.score.number || billetResultModal.score.id
+          }
+          clientNumber={billetResultModal.clientNumber}
+          clientName={clientName}
+          useStandardFileName={billetResultModal.useStandardFileName}
+        />
+      )}
+
+      {modal.type === "billetData" && modal.score.billetInfo && (
+        <ShowBilletDataModal
+          isOpen={true}
+          onClose={onCloseModal}
+          billetData={modal.score.billetInfo}
+          combinedScoreId={modal.score.id}
+          clientNumber={
+            modal.score.number || modal.score.billetInfo?.seuNumero || null
+          }
+          onBilletCancelled={onRefetch}
+        />
+      )}
+
+      <ClientNumberModal
+        open={modal.type === "clientNumber"}
+        onClose={onCloseModal}
+        clientName={clientName}
+        totalValue={
+          modal.type === "clientNumber" ? modal.totalValue : undefined
+        }
+        onConfirm={(number, dueDate, useStandardFileName) => {
+          if (modal.type === "clientNumber") {
+            const { groupId } = modal;
+            onCloseModal();
+            onConfirmClientNumber(
+              groupId,
+              number,
+              dueDate,
+              useStandardFileName,
+            );
+          }
+        }}
+      />
+
+      {invoiceResultModal && (
+        <ShowInvoiceModal
+          isOpen={true}
+          onClose={onCloseInvoiceResult}
+          invoiceData={invoiceResultModal.pdf}
+          scoreNumber={
+            invoiceResultModal.score.number || invoiceResultModal.score.id
+          }
+          ref={invoiceResultModal.score.invoiceRef || ""}
+          invoiceNumber={invoiceResultModal.score.invoiceInfo?.number}
+        />
+      )}
+
+      {modal.type === "invoiceData" && modal.score.invoiceInfo && (
+        <ShowInvoiceDataModal
+          isOpen={true}
+          onClose={onCloseModal}
+          invoiceData={modal.score.invoiceInfo}
+          onInvoiceCancelled={onRefetch}
+        />
+      )}
+
+      {modal.type === "additionalData" && (
+        <AdditionalDataModal
+          isOpen={true}
+          onClose={onCloseModal}
+          onConfirm={(dadosAdicionais) => {
+            const { score, combinedFlow } = modal;
+            onCloseModal();
+            onConfirmAdditionalData(score.id, combinedFlow, dadosAdicionais);
+          }}
+          scoreNumber={modal.score.number || modal.score.id}
+        />
+      )}
+
+      <GameLoadingOverlay
+        isOpen={isGenerating}
+        title="Gerando documento"
+        messages={[
+          "Conectando aos servidores fiscais...",
+          "Processando nota fiscal e/ou boleto...",
+          "Isso pode levar alguns instantes...",
+          "Quase lá...",
+        ]}
+      />
+
+      {invoiceBilletResultModal && (
+        <ShowInvoiceAndBilletModal
+          isOpen={true}
+          onClose={onCloseInvoiceBilletResult}
+          danfeBlob={invoiceBilletResultModal.result.danfeBlob}
+          xmlBlob={invoiceBilletResultModal.result.xmlBlob}
+          billetBlob={invoiceBilletResultModal.result.billetBlob}
+          scoreNumber={
+            invoiceBilletResultModal.score.number ||
+            invoiceBilletResultModal.score.id
+          }
+          invoiceNumber={invoiceBilletResultModal.result.invoiceNumber}
+          billetNumber={invoiceBilletResultModal.result.billetNumber}
+        />
+      )}
+    </>
+  );
+}

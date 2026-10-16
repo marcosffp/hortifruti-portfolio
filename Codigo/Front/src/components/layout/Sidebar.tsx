@@ -1,0 +1,280 @@
+"use client";
+import {
+  BadgeDollarSign,
+  BarChart,
+  Bell,
+  Camera,
+  ChevronDown,
+  Database,
+  FileCode,
+  Home,
+  type LucideIcon,
+  Receipt,
+  Scale,
+  ShoppingBasket,
+  ShoppingCart,
+  Tag,
+  Truck,
+  Users,
+} from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useState } from "react";
+import RoleGuard from "@/components/auth/RoleGuard";
+import { useAuth } from "@/contexts/AuthContext";
+
+export interface MenuItem {
+  label: string;
+  icon: LucideIcon;
+  href: string;
+  submenu?: {
+    label: string;
+    icon: LucideIcon;
+    href: string;
+    roles?: string[];
+  }[];
+  roles?: string[];
+  hiddenInHml?: boolean;
+}
+
+export const menu: MenuItem[] = [
+  {
+    label: "Módulo Lançamentos",
+    icon: BadgeDollarSign,
+    href: "/lancamentos",
+    roles: ["MANAGER"],
+  },
+  {
+    label: "Módulo Comércio",
+    icon: ShoppingCart,
+    href: "#",
+    roles: ["MANAGER", "EMPLOYEE"],
+    submenu: [
+      {
+        label: "Gestão de Clientes",
+        icon: Users,
+        href: "/comercio/clientes",
+        roles: ["MANAGER", "EMPLOYEE"],
+      },
+      {
+        label: "Cálculo de Frete",
+        icon: Truck,
+        href: "/comercio/frete",
+        roles: ["MANAGER", "EMPLOYEE"],
+      },
+      {
+        label: "Recomendações de Produtos",
+        icon: BarChart,
+        href: "/comercio/recomendacoes",
+        roles: ["MANAGER"],
+      },
+      {
+        label: "Consulta de XMLs NF",
+        icon: FileCode,
+        href: "/comercio/nota-fiscal-xml",
+        roles: ["MANAGER"],
+      },
+      {
+        label: "Conversão Caixa→KG",
+        icon: Scale,
+        href: "/comercio/conversao-caixa",
+        roles: ["MANAGER"],
+      },
+      {
+        label: "Tabela de Preços do Cliente",
+        icon: Tag,
+        href: "/comercio/tabela-preco-cliente",
+        roles: ["MANAGER"],
+      },
+    ],
+  },
+  {
+    label: "Gerenciamento de Compras",
+    icon: ShoppingBasket,
+    href: "/comercio/compras",
+    roles: ["MANAGER", "EMPLOYEE"],
+  },
+  {
+    label: "Capturar Nota",
+    icon: Camera,
+    href: "/comercio/capturar-nota",
+    roles: ["MANAGER", "EMPLOYEE"],
+  },
+  {
+    label: "Cobranças",
+    icon: Receipt,
+    href: "/comercio/boletos",
+    roles: ["MANAGER", "EMPLOYEE"],
+  },
+  {
+    label: "Módulo Notificações",
+    icon: Bell,
+    href: "/notificacoes",
+    roles: ["MANAGER", "EMPLOYEE"],
+    hiddenInHml: true,
+  },
+  {
+    label: "Módulo Backup",
+    icon: Database,
+    href: "/backup",
+    roles: ["MANAGER"],
+  },
+  { label: "Módulo Acesso", icon: Users, href: "/acesso", roles: ["MANAGER"] },
+];
+
+export default function Sidebar({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose?: () => void;
+}) {
+  const [openSubMenu, setOpenSubMenu] = useState<number | null>(null);
+  const pathname = usePathname();
+  const { environment } = useAuth();
+  const visibleMenu = menu.filter(
+    (item) => !(item.hiddenInHml && environment === "hml"),
+  );
+
+  const toggleSubMenu = (index: number) => {
+    if (openSubMenu === index) {
+      setOpenSubMenu(null);
+    } else {
+      setOpenSubMenu(index);
+    }
+  };
+
+  return (
+    <aside
+      className={`
+        w-64 
+        bg-white 
+        border-r 
+        border-[var(--neutral-300)] 
+        min-h-screen 
+        p-4 
+        transform transition-transform duration-300
+        max-md:fixed max-md:z-50 
+        ${open ? "max-md:translate-x-0" : "max-md:-translate-x-full"}
+        md:translate-x-0
+      `}
+    >
+      <button
+        type="button"
+        onClick={() => onClose?.()}
+        className="md:hidden absolute top-4 right-4 text-gray-500 hover:text-gray-700"
+        aria-label="Fechar menu lateral"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="lucide lucide-x"
+          aria-hidden="true"
+        >
+          <path d="M18 6 6 18"></path>
+          <path d="m6 6 12 12"></path>
+        </svg>
+      </button>
+
+      <nav className="flex flex-col gap-1 mt-8 md:mt-0">
+        <RoleGuard roles={["MANAGER"]} ignoreRedirect={true}>
+          <Link
+            href="/dashboard"
+            prefetch={false}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg ${pathname === "/dashboard" ? "bg-primary text-white" : "text-gray-700"} hover:bg-primary mb-2`}
+            onClick={() => onClose?.()}
+          >
+            <Home size={18} />
+            <span>Dashboard</span>
+          </Link>
+        </RoleGuard>
+
+        {visibleMenu.map((item, i) => {
+          const isSubActive = item.submenu?.some(
+            (sub) => sub.href === pathname,
+          );
+          const isActive = pathname === item.href || isSubActive;
+
+          return (
+            <RoleGuard
+              key={`menu-item-${item.label}`}
+              roles={item.roles || []}
+              ignoreRedirect={true}
+            >
+              <div className="w-full">
+                {item.submenu ? (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => toggleSubMenu(i)}
+                      className={`flex items-center justify-between w-full px-3 py-2 rounded-lg hover:bg-primary cursor-pointer ${
+                        isSubActive ? "bg-primary text-white" : "text-gray-700"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <item.icon size={18} />
+                        <span>{item.label}</span>
+                      </div>
+                      <ChevronDown
+                        size={16}
+                        className={
+                          openSubMenu === i
+                            ? "transform rotate-180 transition-transform"
+                            : "transition-transform"
+                        }
+                      />
+                    </button>
+                    {openSubMenu === i && (
+                      <div className="ml-7 mt-1 border-l-2 border-green-200 pl-2">
+                        {item.submenu.map((subItem) => (
+                          <RoleGuard
+                            key={`submenu-${item.label}-${subItem.label}`}
+                            roles={subItem.roles || []}
+                            ignoreRedirect={true}
+                          >
+                            <Link
+                              href={subItem.href}
+                              prefetch={false}
+                              className={`flex items-center gap-2 px-3 py-2 text-sm rounded-lg text-gray-700 hover:bg-primary cursor-pointer ${
+                                pathname === subItem.href
+                                  ? "bg-primary text-white"
+                                  : ""
+                              }`}
+                              onClick={() => onClose?.()}
+                            >
+                              <subItem.icon size={16} />
+                              <span>{subItem.label}</span>
+                            </Link>
+                          </RoleGuard>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <Link
+                    href={item.href}
+                    prefetch={false}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-primary cursor-pointer ${
+                      isActive ? "bg-primary text-white" : "text-gray-700"
+                    }`}
+                    onClick={() => onClose?.()}
+                  >
+                    <item.icon size={18} />
+                    <span>{item.label}</span>
+                  </Link>
+                )}
+              </div>
+            </RoleGuard>
+          );
+        })}
+      </nav>
+    </aside>
+  );
+}

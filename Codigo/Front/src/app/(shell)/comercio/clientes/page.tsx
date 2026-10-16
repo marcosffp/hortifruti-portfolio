@@ -1,0 +1,430 @@
+"use client";
+
+import {
+  Calendar,
+  CircleCheck,
+  DollarSign,
+  LayoutGrid,
+  LayoutList,
+  Mail,
+  MapPin,
+  Plus,
+  Search,
+  Settings,
+  User,
+} from "lucide-react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import RoleGuard from "@/components/auth/RoleGuard";
+import ClientDetailModal from "@/components/modals/ClientDetailModal";
+import ClientCard from "@/components/modules/ClientCard";
+import Button from "@/components/ui/Button";
+import { clientService } from "@/services/clientService";
+import { combinedScoreService } from "@/services/combinedScoreService";
+import { showError, showSuccess } from "@/utils/toastUtils";
+
+interface ClienteUI {
+  id: number;
+  nome: string;
+  apelido: string;
+  email: string;
+  telefone: string;
+  endereco: string;
+  status: "preco-fixo" | "preco-variavel";
+  ultimaCompra?: string;
+  totalCompras?: number;
+}
+
+function formatLastPurchaseDate(dateString: string | null): string {
+  if (!dateString) return "-";
+  const [year, month, day] = dateString.split("T")[0].split("-");
+  return `${day}/${month}/${year}`;
+}
+
+export default function ClientesPage() {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [clientes, setClientes] = useState<ClienteUI[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+
+  useEffect(() => {
+    const savedViewMode = localStorage.getItem("clientesViewMode");
+    if (savedViewMode === "list" || savedViewMode === "grid") {
+      setViewMode(savedViewMode as "list" | "grid");
+    }
+  }, []);
+
+  useEffect(() => {
+    const fetchClientes = async () => {
+      try {
+        setIsLoading(true);
+        const [clientesResponse, lastGroupings] = await Promise.all([
+          clientService.getAllClients(),
+          combinedScoreService.fetchLastGroupingPerClient(),
+        ]);
+
+        const lastGroupingByClientId = new Map(
+          lastGroupings.map((grouping) => [grouping.clientId, grouping]),
+        );
+
+        const clientesUI: ClienteUI[] = clientesResponse.map((client) => {
+          const lastGrouping = lastGroupingByClientId.get(client.id);
+          return {
+            id: client.id,
+            nome: client.clientName,
+            apelido: client.nickname || "",
+            email: client.email || "",
+            telefone: client.phoneNumber || "",
+            endereco: client.address || "",
+            status: client.variablePrice ? "preco-variavel" : "preco-fixo",
+            ultimaCompra: formatLastPurchaseDate(
+              lastGrouping?.confirmedAt ?? null,
+            ),
+            totalCompras: lastGrouping?.totalValue ?? 0,
+          };
+        });
+
+        setClientes(clientesUI);
+      } catch (error) {
+        showError("Não foi possível carregar a lista de clientes");
+        console.error("Erro ao carregar clientes:", error);
+        setClientes([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchClientes();
+  }, []);
+
+  const filteredClientes = clientes.filter(
+    (cliente) =>
+      cliente.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      cliente.apelido.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      cliente.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      cliente.telefone.toLowerCase().includes(searchTerm.toLowerCase()),
+  );
+
+  const [clienteParaExcluir, setClienteParaExcluir] = useState<number | null>(
+    null,
+  );
+  const [clienteDetalhesId, setClienteDetalhesId] = useState<number | null>(
+    null,
+  );
+
+  const confirmarExclusao = (id: number) => {
+    setClienteParaExcluir(id);
+  };
+
+  const handleExcluirCliente = async (id: number) => {
+    confirmarExclusao(id);
+  };
+
+  const confirmarEExcluirCliente = async () => {
+    if (!clienteParaExcluir) return;
+
+    try {
+      await clientService.deleteClient(clienteParaExcluir);
+      setClientes(
+        clientes.filter((cliente) => cliente.id !== clienteParaExcluir),
+      );
+      showSuccess("Cliente excluído com sucesso!");
+      setClienteParaExcluir(null);
+    } catch (error) {
+      showError("Erro ao excluir cliente");
+      console.error("Erro ao excluir cliente:", error);
+    }
+  };
+
+  const cancelarExclusao = () => {
+    setClienteParaExcluir(null);
+  };
+
+  return (
+    <RoleGuard roles={["MANAGER", "EMPLOYEE"]}>
+      <main className="flex-1 p-8 bg-gray-50 overflow-auto">
+        <div className="flex flex-col max-w-7xl mx-auto">
+          <div className="mb-8">
+            <h1 className="text-2xl font-bold text-gray-800">
+              Gestão de Clientes
+            </h1>
+            <p className="text-gray-600 mt-1">
+              Gerencie os dados dos seus clientes, incluindo edição, adição e
+              remoção de registros.
+            </p>
+          </div>
+
+          <div className="flex justify-between flex-wrap gap-3 items-center mb-6">
+            <div className="flex items-center gap-4">
+              <div className="relative w-full max-w-md">
+                <input
+                  type="text"
+                  placeholder="Buscar por nome, apelido ou email..."
+                  className="pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                <Search
+                  className="absolute left-3 top-3 text-gray-400"
+                  size={18}
+                />
+              </div>
+              <div className="flex bg-gray-100 rounded-lg p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewMode("list");
+                    localStorage.setItem("clientesViewMode", "list");
+                  }}
+                  className={`p-2 rounded-md ${viewMode === "list" ? "bg-white shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                  aria-label="Visualização em lista"
+                  title="Visualização em lista"
+                >
+                  <LayoutList size={20} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewMode("grid");
+                    localStorage.setItem("clientesViewMode", "grid");
+                  }}
+                  className={`p-2 rounded-md ${viewMode === "grid" ? "bg-white shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                  aria-label="Visualização em grade"
+                  title="Visualização em grade"
+                >
+                  <LayoutGrid size={20} />
+                </button>
+              </div>
+            </div>
+            <Link href="/comercio/clientes/novo">
+              <Button
+                variant="primary"
+                className="flex items-center gap-2 py-2.5 px-4 bg-green-600 hover:bg-green-700 transition-colors"
+                icon={<Plus size={18} />}
+              >
+                Novo Cliente
+              </Button>
+            </Link>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md border border-gray-200 overflow-hidden">
+            <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-white">
+              <div className="flex items-center">
+                <div className="bg-green-50 p-2 rounded-lg mr-3">
+                  <User size={20} className="text-green-600" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-800">
+                    Lista de Clientes
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    Gerencie seus clientes e visualize informações detalhadas
+                  </p>
+                </div>
+              </div>
+              <div className="bg-green-50 px-3 py-1.5 rounded-full font-medium text-green-700 text-sm">
+                {filteredClientes.length}{" "}
+                {filteredClientes.length === 1 ? "cliente" : "clientes"}
+              </div>
+            </div>
+
+            {viewMode === "list" && (
+              <div className="hidden md:grid grid-cols-[2.2fr_1.2fr_1.7fr_1.3fr_1.2fr_1fr_100px] gap-4 px-6 py-4 border-b bg-gradient-to-r from-gray-50 to-gray-100 shadow-sm">
+                <div className="flex items-center gap-2 min-w-0">
+                  <User size={16} className="text-gray-500 shrink-0" />
+                  <span className="font-semibold text-gray-800 truncate">
+                    Cliente
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <Mail size={16} className="text-gray-500 shrink-0" />
+                  <span className="font-semibold text-gray-800 truncate">
+                    Contato
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <MapPin size={16} className="text-gray-500 shrink-0" />
+                  <span className="font-semibold text-gray-800 truncate">
+                    Endereço
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <CircleCheck size={16} className="text-gray-500 shrink-0" />
+                  <span className="font-semibold text-gray-800 truncate">
+                    Preço
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <Calendar size={16} className="text-gray-500 shrink-0" />
+                  <span className="font-semibold text-gray-800 truncate">
+                    Última compra
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <DollarSign size={16} className="text-gray-500 shrink-0" />
+                  <span className="font-semibold text-gray-800 truncate">
+                    Total
+                  </span>
+                </div>
+                <div className="flex justify-end">
+                  <Settings size={16} className="text-gray-500" />
+                </div>
+              </div>
+            )}
+
+            {isLoading && (
+              <div className="py-16 text-center">
+                <div className="flex justify-center mb-4">
+                  <div className="relative animate-pulse">
+                    <div className="h-20 w-20 rounded-full bg-green-50 flex items-center justify-center">
+                      <div className="animate-spin rounded-full h-14 w-14 border-4 border-gray-100 border-t-green-600 border-r-green-600"></div>
+                    </div>
+                    <div className="absolute bottom-0 right-0 bg-green-100 rounded-full p-1.5">
+                      <User size={14} className="text-green-600" />
+                    </div>
+                  </div>
+                </div>
+                <p className="text-lg font-medium text-gray-700 mt-4">
+                  Carregando clientes...
+                </p>
+                <p className="text-sm mt-1 text-gray-500 max-w-md mx-auto">
+                  Aguarde enquanto buscamos os dados dos clientes cadastrados
+                </p>
+              </div>
+            )}
+
+            {!isLoading && filteredClientes.length === 0 && (
+              <div className="py-16 text-center text-gray-500">
+                <div className="flex justify-center mb-6">
+                  {searchTerm ? (
+                    <div className="bg-orange-50 rounded-full p-5 border border-orange-100 shadow-sm">
+                      <Search size={48} className="text-orange-400" />
+                    </div>
+                  ) : (
+                    <div className="bg-blue-50 rounded-full p-6 border border-blue-100 shadow-sm">
+                      <User size={48} className="text-blue-400" />
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-xl font-medium text-gray-700">
+                  {searchTerm
+                    ? "Busca sem resultados"
+                    : "Nenhum cliente cadastrado"}
+                </p>
+
+                <p className="text-sm mt-3 max-w-md mx-auto text-gray-600">
+                  {searchTerm
+                    ? `Não encontramos clientes com o termo "${searchTerm}". Tente outras palavras-chave ou limpe o campo de busca.`
+                    : "Sua lista de clientes está vazia. Adicione novos clientes para começar a gerenciar sua base de clientes."}
+                </p>
+
+                <div className="mt-8">
+                  {searchTerm ? (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm("")}
+                      className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors inline-flex items-center gap-2"
+                    >
+                      <Search size={16} />
+                      <span>Limpar busca</span>
+                    </button>
+                  ) : (
+                    <Link href="/comercio/clientes/novo">
+                      <Button
+                        variant="primary"
+                        className="flex items-center gap-2 py-2.5 px-5 bg-green-600 hover:bg-green-700 transition-colors mx-auto shadow-sm"
+                        icon={<Plus size={18} />}
+                      >
+                        Adicionar Cliente
+                      </Button>
+                    </Link>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {!isLoading &&
+              filteredClientes.length > 0 &&
+              viewMode === "list" &&
+              filteredClientes.map((cliente) => (
+                <ClientCard
+                  key={cliente.id}
+                  id={cliente.id}
+                  nome={cliente.nome}
+                  apelido={cliente.apelido}
+                  email={cliente.email}
+                  telefone={cliente.telefone}
+                  endereco={cliente.endereco}
+                  status={cliente.status}
+                  ultimaCompra={cliente.ultimaCompra}
+                  totalCompras={cliente.totalCompras || 0}
+                  onDelete={handleExcluirCliente}
+                  onViewDetails={setClienteDetalhesId}
+                  displayMode="list"
+                />
+              ))}
+
+            {!isLoading &&
+              filteredClientes.length > 0 &&
+              viewMode === "grid" && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-6">
+                  {filteredClientes.map((cliente) => (
+                    <ClientCard
+                      key={cliente.id}
+                      id={cliente.id}
+                      nome={cliente.nome}
+                      email={cliente.email}
+                      telefone={cliente.telefone}
+                      endereco={cliente.endereco}
+                      status={cliente.status}
+                      ultimaCompra={cliente.ultimaCompra}
+                      totalCompras={cliente.totalCompras || 0}
+                      onDelete={handleExcluirCliente}
+                      onViewDetails={setClienteDetalhesId}
+                      displayMode="grid"
+                    />
+                  ))}
+                </div>
+              )}
+          </div>
+        </div>
+      </main>
+
+      {clienteParaExcluir !== null && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-xl font-semibold text-gray-800 mb-4">
+              Confirmar exclusão
+            </h3>
+            <p className="text-gray-600 mb-6">
+              Tem certeza que deseja excluir este cliente? Esta ação não pode
+              ser desfeita.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={cancelarExclusao}
+                className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarEExcluirCliente}
+                className="px-4 py-2 bg-red-600/80 text-white rounded-md hover:bg-red-700 transition-colors"
+              >
+                Excluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ClientDetailModal
+        clientId={clienteDetalhesId}
+        onClose={() => setClienteDetalhesId(null)}
+      />
+    </RoleGuard>
+  );
+}
