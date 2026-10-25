@@ -1,0 +1,389 @@
+package com.hortifruti.sl.hortifruti.service.purchase;
+
+import com.hortifruti.sl.hortifruti.dto.purchase.DuplicatePurchaseResponse;
+import com.hortifruti.sl.hortifruti.dto.purchase.InvoiceProductResponse;
+import com.hortifruti.sl.hortifruti.dto.purchase.ManualPurchaseItemRequest;
+import com.hortifruti.sl.hortifruti.dto.purchase.ManualPurchaseRequest;
+import com.hortifruti.sl.hortifruti.dto.purchase.PurchaseResponse;
+import com.hortifruti.sl.hortifruti.exception.purchase.ClientException;
+import com.hortifruti.sl.hortifruti.exception.purchase.PurchaseException;
+import com.hortifruti.sl.hortifruti.mapper.InvoiceProductMapper;
+import com.hortifruti.sl.hortifruti.mapper.PurchaseMapper;
+import com.hortifruti.sl.hortifruti.model.product.FiscalProduct;
+import com.hortifruti.sl.hortifruti.model.purchase.Client;
+import com.hortifruti.sl.hortifruti.model.purchase.InvoiceProduct;
+import com.hortifruti.sl.hortifruti.model.purchase.Purchase;
+import com.hortifruti.sl.hortifruti.repository.product.FiscalProductRepository;
+import com.hortifruti.sl.hortifruti.repository.purchase.ClientRepository;
+import com.hortifruti.sl.hortifruti.repository.purchase.InvoiceProductRepository;
+import com.hortifruti.sl.hortifruti.repository.purchase.PurchaseRepository;
+import com.hortifruti.sl.hortifruti.service.purchase.tabelapreco.NotaPrecoOficialChecker;
+import com.hortifruti.sl.hortifruti.service.storage.R2StorageService;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+@Slf4j
+@Service
+@AllArgsConstructor
+public class PurchaseService {
+
+  private static final ZoneId BRAZIL_ZONE = ZoneId.of("America/Sao_Paulo");
+
+  private final PurchaseProcessingService purchaseProcessingService;
+  private final PurchaseRepository purchaseRepository;
+  private final ClientRepository clientRepository;
+  private final InvoiceProductMapper invoiceProductMapper;
+  private final PurchaseMapper purchaseMapper;
+  private final InvoiceProductRepository invoiceProductRepository;
+  private final FiscalProductRepository fiscalProductRepository;
+  private final R2StorageService r2StorageService;
+  private final NotaPrecoOficialChecker notaPrecoOficialChecker;
+
+  @Transactional
+  public Purchase processPurchaseFile(MultipartFile file) throws IOException {
+    if (file == null) {
+      throw new PurchaseException("Arquivo não fornecido");
+    }
+
+    Purchase purchase = purchaseProcessingService.processPurchaseFile(file);
+    Client client =
+        clientRepository
+            .findById(purchase.getClient().getId())
+            .orElseThrow(
+                () ->
+                    new ClientException(
+                        "Cliente não encontrado com o ID: " + purchase.getClient().getId()));
+    client.setLastPurchaseDate(purchase.getCreatedAt().toLocalDate());
+    clientRepository.save(client);
+    return purchase;
+  }
+
+  @Transactional
+  public Purchase createManualPurchase(ManualPurchaseRequest request) {
+    if (request.items() == null || request.items().isEmpty()) {
+      throw new PurchaseException("A compra precisa ter ao menos um item.");
+    }
+
+    Client client =
+        clientRepository
+            .findById(request.clientId())
+            .orElseThrow(
+                () ->
+                    new ClientException("Cliente não encontrado com o ID: " + request.clientId()));
+
+    List<InvoiceProduct> invoiceProducts = new ArrayList<>();
+    for (ManualPurchaseItemRequest item : request.items()) {
+      if (item.quantity() == null || item.quantity().compareTo(BigDecimal.ZERO) <= 0) {
+        throw new PurchaseException("A quantidade do item deve ser maior que zero.");
+      }
+      if (item.price() == null || item.price().compareTo(BigDecimal.ZERO) < 0) {
+        throw new PurchaseException("O preço do item não pode ser negativo.");
+      }
+
+      FiscalProduct fiscalProduct =
+          fiscalProductRepository
+              .findByCode(item.code())
+              .orElseThrow(
+                  () ->
+                      new PurchaseException(
+                          "Produto não encontrado no catálogo para o código: " + item.code()));
+
+      invoiceProducts.add(
+          InvoiceProduct.builder()
+              .code(fiscalProduct.getCode())
+              .name(fiscalProduct.getDescription())
+              .unitType(fiscalProduct.getUnidadeComercial())
+              .price(
+                  precoOficialOuInformado(
+                      client.getId(), request.purchaseDate(), fiscalProduct, item.price()))
+              .quantity(item.quantity())
+              .build());
+    }
+
+    BigDecimal total =
+        invoiceProducts.stream()
+            .map(product -> product.getPrice().multiply(product.getQuantity()))
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+    if (total.compareTo(BigDecimal.ZERO) <= 0) {
+      throw new PurchaseException("O total da compra não pode ser zero ou negativo.");
+    }
+
+    Purchase purchase =
+        Purchase.builder()
+            .client(client)
+            .purchaseDate(request.purchaseDate().atStartOfDay())
+            .total(total)
+            .build();
+
+    purchase = purchaseRepository.save(purchase);
+
+    List<InvoiceProduct> savedProducts = new ArrayList<>();
+    for (InvoiceProduct product : invoiceProducts) {
+      product.setPurchase(purchase);
+      savedProducts.add(invoiceProductRepository.save(product));
+    }
+
+    purchase.setInvoiceProducts(savedProducts);
+    purchase = purchaseRepository.save(purchase);
+
+    client.setLastPurchaseDate(purchase.getCreatedAt().toLocalDate());
+    clientRepository.save(client);
+
+    return purchase;
+  }
+
+  /**
+   * Sobrescreve o preço informado (digitado manualmente ou vindo da revisão de uma nota capturada)
+   * pelo preço oficial da {@code TabelaPrecoCliente CONFIRMADA} do cliente pra esse produto/data,
+   * quando existir — este é o ponto de aplicação real de "a tabela é autoritativa" (não só uma
+   * sinalização de tela): mesmo que o revisor não tenha visto/aplicado o alerta de divergência na
+   * extração ({@code GeminiExtractionService#aplicarPrecoOficial}), o preço persistido aqui nunca
+   * diverge da tabela confirmada. Sem tabela confirmada pro período (ou cliente sem tabela
+   * nenhuma), o preço informado é usado como está — nunca inventa preço.
+   */
+  private BigDecimal precoOficialOuInformado(
+      Long clientId,
+      LocalDate purchaseDate,
+      FiscalProduct fiscalProduct,
+      BigDecimal precoInformado) {
+    Optional<BigDecimal> precoOficial =
+        notaPrecoOficialChecker.precoOficial(clientId, purchaseDate, fiscalProduct.getId());
+    if (precoOficial.isEmpty() || precoOficial.get().compareTo(precoInformado) == 0) {
+      return precoInformado;
+    }
+
+    log.warn(
+        "Preço divergente da tabela oficial sobrescrito na confirmação da compra: clientId={},"
+            + " produto={}, precoInformado={}, precoOficial={}",
+        clientId,
+        fiscalProduct.getCode(),
+        precoInformado,
+        precoOficial.get());
+    return precoOficial.get();
+  }
+
+  @Transactional
+  public InvoiceProductResponse addInvoiceProduct(Long purchaseId, ManualPurchaseItemRequest item) {
+    Purchase purchase =
+        purchaseRepository
+            .findById(purchaseId)
+            .orElseThrow(
+                () -> new PurchaseException("Compra não encontrada com o ID: " + purchaseId));
+
+    if (item.quantity() == null || item.quantity().compareTo(BigDecimal.ZERO) <= 0) {
+      throw new PurchaseException("A quantidade do item deve ser maior que zero.");
+    }
+    if (item.price() == null || item.price().compareTo(BigDecimal.ZERO) < 0) {
+      throw new PurchaseException("O preço do item não pode ser negativo.");
+    }
+
+    FiscalProduct fiscalProduct =
+        fiscalProductRepository
+            .findByCode(item.code())
+            .orElseThrow(
+                () ->
+                    new PurchaseException(
+                        "Produto não encontrado no catálogo para o código: " + item.code()));
+
+    InvoiceProduct invoiceProduct =
+        InvoiceProduct.builder()
+            .code(fiscalProduct.getCode())
+            .name(fiscalProduct.getDescription())
+            .unitType(fiscalProduct.getUnidadeComercial())
+            .price(item.price())
+            .quantity(item.quantity())
+            .purchase(purchase)
+            .build();
+
+    invoiceProduct = invoiceProductRepository.save(invoiceProduct);
+    recalculateTotal(purchaseId);
+
+    return invoiceProductMapper.toResponse(invoiceProduct);
+  }
+
+  @Transactional(readOnly = true)
+  public List<Purchase> findByCreatedAtBetween(LocalDateTime startDate, LocalDateTime endDate) {
+    return purchaseRepository.findByCreatedAtBetween(startDate, endDate);
+  }
+
+  @Transactional
+  public void deleteAllByCreatedAtBetween(LocalDateTime startDate, LocalDateTime endDate) {
+    purchaseRepository.deleteAll(purchaseRepository.findByCreatedAtBetween(startDate, endDate));
+  }
+
+  /**
+   * Corrige a data da compra mantendo o horário já gravado. Compra que já compõe um agrupamento não
+   * pode ter a data alterada: o período e o total do agrupamento foram calculados com a data
+   * antiga.
+   */
+  @Transactional
+  public Purchase updatePurchaseDate(Long id, LocalDate newDate) {
+    Purchase purchase =
+        purchaseRepository
+            .findById(id)
+            .orElseThrow(() -> new PurchaseException("Compra não encontrada com o ID: " + id));
+    if (purchase.getCombinedScoreId() != null) {
+      throw new PurchaseException(
+          "Esta compra faz parte de um agrupamento — remova o agrupamento antes de alterar a data.");
+    }
+    purchase.setPurchaseDate(newDate.atTime(purchase.getPurchaseDate().toLocalTime()));
+    return purchaseRepository.save(purchase);
+  }
+
+  /**
+   * Duplica a compra com a data de hoje: copia todos os itens (código, nome, unidade, preço e
+   * quantidade, exatamente como estão — sem reaplicar a tabela de preços) e o total. Não copia o
+   * vínculo com agrupamento nem a foto de comprovante; o retorno indica se a original tinha foto.
+   */
+  @Transactional
+  public DuplicatePurchaseResponse duplicatePurchase(Long id) {
+    Purchase original =
+        purchaseRepository
+            .findById(id)
+            .orElseThrow(() -> new PurchaseException("Compra não encontrada com o ID: " + id));
+
+    Purchase copy =
+        purchaseRepository.save(
+            Purchase.builder()
+                .client(original.getClient())
+                .purchaseDate(LocalDate.now(BRAZIL_ZONE).atStartOfDay())
+                .total(original.getTotal())
+                .build());
+
+    List<InvoiceProduct> copiedProducts = new ArrayList<>();
+    for (InvoiceProduct product : original.getInvoiceProducts()) {
+      copiedProducts.add(
+          invoiceProductRepository.save(
+              InvoiceProduct.builder()
+                  .code(product.getCode())
+                  .name(product.getName())
+                  .unitType(product.getUnitType())
+                  .price(product.getPrice())
+                  .quantity(product.getQuantity())
+                  .purchase(copy)
+                  .build()));
+    }
+    copy.setInvoiceProducts(copiedProducts);
+
+    Client client = original.getClient();
+    client.setLastPurchaseDate(copy.getCreatedAt().toLocalDate());
+    clientRepository.save(client);
+
+    return new DuplicatePurchaseResponse(
+        purchaseMapper.toResponse(copy), original.getImagemR2Key() != null);
+  }
+
+  public void deletePurchaseById(Long id) {
+    Purchase purchase =
+        purchaseRepository
+            .findById(id)
+            .orElseThrow(() -> new PurchaseException("Compra não encontrada com o ID: " + id));
+    purchaseRepository.delete(purchase);
+  }
+
+  @Transactional(readOnly = true)
+  public Page<PurchaseResponse> getPurchasesByClientOrdered(Long clientId, Pageable pageable) {
+    clientRepository
+        .findById(clientId)
+        .orElseThrow(() -> new ClientException("Cliente não encontrado com o ID: " + clientId));
+
+    return purchaseRepository
+        .findByClientIdOrderByCreatedAtDesc(clientId, pageable)
+        .map(purchaseMapper::toResponse);
+  }
+
+  /**
+   * Foto de comprovante anexada à compra (ver {@code
+   * CapturaNotaPendenteService#confirmarComoCompra} e {@code Client#requiresPurchaseProof}) — a
+   * extensão vem da própria chave R2 (gerada em {@code StorageKeyGenerator}), então não precisa de
+   * uma coluna própria de content-type.
+   */
+  @Transactional(readOnly = true)
+  public ImagemCompra buscarImagem(Long purchaseId) {
+    Purchase purchase =
+        purchaseRepository
+            .findById(purchaseId)
+            .orElseThrow(
+                () -> new PurchaseException("Compra não encontrada com o ID: " + purchaseId));
+
+    if (purchase.getImagemR2Key() == null) {
+      throw new PurchaseException("Esta compra não tem foto de comprovante anexada.");
+    }
+
+    String contentType = purchase.getImagemR2Key().endsWith(".png") ? "image/png" : "image/jpeg";
+    return new ImagemCompra(r2StorageService.download(purchase.getImagemR2Key()), contentType);
+  }
+
+  public record ImagemCompra(byte[] bytes, String contentType) {}
+
+  @Transactional(readOnly = true)
+  public List<InvoiceProductResponse> getInvoiceProductsByPurchaseId(Long purchaseId) {
+    Purchase purchase =
+        purchaseRepository
+            .findById(purchaseId)
+            .orElseThrow(
+                () -> new PurchaseException("Compra não encontrada com o ID: " + purchaseId));
+
+    return purchase.getInvoiceProducts().stream()
+        .sorted((p1, p2) -> p1.getName().compareToIgnoreCase(p2.getName()))
+        .map(invoiceProductMapper::toResponse)
+        .toList();
+  }
+
+  @Transactional
+  public void recalculateTotal(Long purchaseId) {
+    Purchase purchase =
+        purchaseRepository
+            .findById(purchaseId)
+            .orElseThrow(
+                () -> new PurchaseException("Compra não encontrada com o ID: " + purchaseId));
+
+    BigDecimal newTotal =
+        purchase.getInvoiceProducts().stream()
+            .map(invoiceProduct -> invoiceProduct.getPrice().multiply(invoiceProduct.getQuantity()))
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+    purchase.setTotal(newTotal);
+
+    purchaseRepository.save(purchase);
+  }
+
+  @Transactional(readOnly = true)
+  public Page<PurchaseResponse> getPurchasesByDateRange(
+      LocalDateTime startDate, LocalDateTime endDate, Pageable pageable) {
+    Page<Purchase> purchases =
+        purchaseRepository.findByPurchaseDateBetweenOrderByPurchaseDateDesc(
+            startDate, endDate, pageable);
+
+    return purchases.map(purchaseMapper::toResponse);
+  }
+
+  @Transactional(readOnly = true)
+  public Page<PurchaseResponse> getPurchasesByDateRange(
+      String startDate, String endDate, int page, int size) {
+    LocalDateTime start = LocalDateTime.parse(startDate);
+    LocalDateTime end = LocalDateTime.parse(endDate);
+
+    Pageable pageable = PageRequest.of(page, size);
+
+    Page<Purchase> purchases =
+        purchaseRepository.findByPurchaseDateBetweenOrderByPurchaseDateDesc(start, end, pageable);
+
+    return purchases.map(purchaseMapper::toResponse);
+  }
+}

@@ -1,0 +1,298 @@
+package com.hortifruti.sl.hortifruti.service.notification;
+
+import com.hortifruti.sl.hortifruti.config.notification.NotificationEnvironmentGuard;
+import com.hortifruti.sl.hortifruti.dto.notification.BulkNotificationResponse;
+import com.hortifruti.sl.hortifruti.dto.notification.NotificationResponse;
+import com.hortifruti.sl.hortifruti.exception.notification.NotificationException;
+import com.hortifruti.sl.hortifruti.model.notification.NotificationChannel;
+import com.hortifruti.sl.hortifruti.model.purchase.Client;
+import com.hortifruti.sl.hortifruti.repository.purchase.ClientRepository;
+import com.hortifruti.sl.hortifruti.service.notification.email.EmailMessageVariables;
+import com.hortifruti.sl.hortifruti.service.notification.email.EmailTemplateService;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class BulkNotificationService {
+
+  private final NotificationCoordinator notificationCoordinator;
+  private final ClientRepository clientRepository;
+  private final EmailTemplateService emailTemplateService;
+  private final NotificationEnvironmentGuard notificationEnvironmentGuard;
+
+  @Value("${accounting.email}")
+  private String accountingEmail;
+
+  @Value("${notification.sender-name:}")
+  private String senderName;
+
+  /**
+   * Wrapper {@code @Async} de {@link #sendBulkNotifications} — o envio de WhatsApp em massa
+   * intercala {@code Thread.sleep(2000)} entre documentos ({@link
+   * com.hortifruti.sl.hortifruti.service.notification.whatsapp.WhatsAppService#sendMultipleDocuments}),
+   * então N clientes × M documentos pode prender uma thread do servlet (pool limitado do Tomcat)
+   * por dezenas de segundos. Rodar num executor dedicado libera a thread do servlet; o controller
+   * usa {@code CompletableFuture} como tipo de retorno para o Spring MVC manter a requisição HTTP
+   * original aberta sem bloquear nada.
+   */
+  @Async
+  public CompletableFuture<BulkNotificationResponse> sendBulkNotificationsAsync(
+      List<MultipartFile> files,
+      List<Long> clientIds,
+      List<String> channels,
+      String destinationType,
+      String customMessage) {
+    return CompletableFuture.completedFuture(
+        sendBulkNotifications(files, clientIds, channels, destinationType, customMessage));
+  }
+
+  public BulkNotificationResponse sendBulkNotifications(
+      List<MultipartFile> files,
+      List<Long> clientIds,
+      List<String> channels,
+      String destinationType,
+      String customMessage) {
+    if (notificationEnvironmentGuard.isBlocked()) {
+      return BulkNotificationResponse.failure(
+          "Envio de notificações está desabilitado em homologação.", List.of());
+    }
+
+    try {
+      if (files == null || files.isEmpty()) {
+        throw new NotificationException("Pelo menos um arquivo deve ser fornecido");
+      }
+
+      if (channels == null || channels.isEmpty()) {
+        throw new NotificationException("Pelo menos um canal deve ser selecionado");
+      }
+
+      List<byte[]> fileContents = new ArrayList<>();
+      List<String> fileNames = new ArrayList<>();
+
+      for (MultipartFile file : files) {
+        fileContents.add(file.getBytes());
+        fileNames.add(file.getOriginalFilename());
+      }
+
+      boolean sendEmail = channels.contains("email");
+      boolean sendWhatsApp = channels.contains("whatsapp");
+      NotificationChannel channel = determineChannel(sendEmail, sendWhatsApp);
+
+      if ("contabilidade".equalsIgnoreCase(destinationType)) {
+        return sendToAccounting(fileContents, fileNames, customMessage, channel);
+      } else {
+        return sendToClients(clientIds, fileContents, fileNames, customMessage, channel);
+      }
+
+    } catch (IOException e) {
+      return BulkNotificationResponse.failure(
+          "Erro ao processar arquivos: " + e.getMessage(), List.of());
+    } catch (Exception e) {
+      log.error("Erro inesperado ao enviar notificações em lote", e);
+      return BulkNotificationResponse.failure(
+          "Erro ao enviar notificações: " + e.getMessage(), List.of());
+    }
+  }
+
+  private BulkNotificationResponse sendToAccounting(
+      List<byte[]> fileContents,
+      List<String> fileNames,
+      String customMessage,
+      NotificationChannel channel) {
+    try {
+      String subject = String.format("Documentos Contábeis - %d arquivo(s)", fileContents.size());
+      String emailBody = buildAccountingMessage(fileContents.size(), customMessage);
+
+      boolean success =
+          switch (channel) {
+            case EMAIL ->
+                notificationCoordinator.sendEmailOnly(
+                    accountingEmail, subject, emailBody, fileContents, fileNames);
+            case WHATSAPP, BOTH -> {
+              var whatsAppContext =
+                  NotificationCoordinator.WhatsAppMessageContext.builder()
+                      .customMessage(customMessage)
+                      .subject(subject);
+
+              NotificationResponse response =
+                  notificationCoordinator.sendNotification(
+                      accountingEmail,
+                      channel,
+                      subject,
+                      emailBody,
+                      NotificationCoordinator.WhatsAppMessageType.GENERIC_FILES,
+                      whatsAppContext,
+                      fileContents,
+                      fileNames);
+              yield response.success();
+            }
+          };
+
+      if (success) {
+        String channelText = getChannelText(channel);
+        return BulkNotificationResponse.success(
+            1,
+            String.format(
+                "%d arquivo(s) enviado(s) para contabilidade via %s",
+                fileContents.size(), channelText));
+      } else {
+        return BulkNotificationResponse.failure(
+            "Falha ao enviar para contabilidade", List.of("Contabilidade"));
+      }
+
+    } catch (Exception e) {
+      return BulkNotificationResponse.failure(
+          "Erro ao enviar para contabilidade: " + e.getMessage(), List.of("Contabilidade"));
+    }
+  }
+
+  private BulkNotificationResponse sendToClients(
+      List<Long> clientIds,
+      List<byte[]> fileContents,
+      List<String> fileNames,
+      String customMessage,
+      NotificationChannel channel) {
+    if (clientIds == null || clientIds.isEmpty()) {
+      throw new NotificationException("Pelo menos um cliente deve ser selecionado");
+    }
+
+    int successCount = 0;
+    List<String> failedRecipients = new ArrayList<>();
+
+    for (Long clientId : clientIds) {
+      try {
+        Optional<Client> clientOpt = clientRepository.findById(clientId);
+
+        if (clientOpt.isEmpty()) {
+          failedRecipients.add("Cliente ID: " + clientId);
+          continue;
+        }
+
+        Client client = clientOpt.get();
+
+        if (channel == NotificationChannel.EMAIL
+            && (client.getEmail() == null || client.getEmail().isEmpty())) {
+          failedRecipients.add(client.getClientName() + " (sem e-mail)");
+          continue;
+        }
+
+        if (channel == NotificationChannel.WHATSAPP
+            && (client.getPhoneNumber() == null || client.getPhoneNumber().isEmpty())) {
+          failedRecipients.add(client.getClientName() + " (sem telefone)");
+          continue;
+        }
+
+        if (channel == NotificationChannel.BOTH) {
+          if ((client.getEmail() == null || client.getEmail().isEmpty())
+              && (client.getPhoneNumber() == null || client.getPhoneNumber().isEmpty())) {
+            failedRecipients.add(client.getClientName() + " (sem contatos)");
+            continue;
+          }
+        }
+
+        String subject = String.format("Documentos - %s", client.getClientName());
+        String emailBody = buildClientMessage(client, fileContents.size(), customMessage);
+
+        var whatsAppContext =
+            NotificationCoordinator.WhatsAppMessageContext.builder()
+                .client(client)
+                .customMessage(customMessage);
+
+        NotificationResponse response =
+            notificationCoordinator.sendNotification(
+                client.getEmail(),
+                client.getPhoneNumber(),
+                channel,
+                subject,
+                emailBody,
+                NotificationCoordinator.WhatsAppMessageType.CLIENT_DOCUMENTS,
+                whatsAppContext,
+                fileContents,
+                fileNames);
+
+        if (response.success()) {
+          successCount++;
+        } else {
+          failedRecipients.add(client.getClientName());
+        }
+
+      } catch (NotificationException e) {
+        if (e.getMessage() != null
+            && e.getMessage().startsWith("Autorização do Gmail necessária:")) {
+          // Falha de autorização afeta todos os envios igualmente, não faz sentido continuar
+          // tentando cliente por cliente.
+          return BulkNotificationResponse.failure(e.getMessage(), failedRecipients);
+        }
+        failedRecipients.add("Cliente ID: " + clientId + " (erro)");
+      } catch (Exception e) {
+        log.error("Erro inesperado ao notificar cliente ID {}", clientId, e);
+        failedRecipients.add("Cliente ID: " + clientId + " (erro)");
+      }
+    }
+
+    if (successCount == 0) {
+      return BulkNotificationResponse.failure(
+          "Nenhuma notificação foi enviada com sucesso", failedRecipients);
+    } else if (failedRecipients.isEmpty()) {
+      String channelText = getChannelText(channel);
+      return BulkNotificationResponse.success(
+          successCount,
+          String.format(
+              "%d arquivo(s) enviado(s) com sucesso para %d destinatário(s) via %s",
+              fileContents.size(), successCount, channelText));
+    } else {
+      return BulkNotificationResponse.partial(
+          successCount, failedRecipients.size(), failedRecipients);
+    }
+  }
+
+  private String buildAccountingMessage(int filesCount, String customMessage) {
+    Map<String, String> variables = new HashMap<>();
+    variables.put("FILES_COUNT", String.valueOf(filesCount));
+    EmailMessageVariables.putCustomOrDefaultToggle(variables, customMessage);
+
+    return emailTemplateService.processTemplate("accounting-documents", variables);
+  }
+
+  private String buildClientMessage(Client client, int filesCount, String customMessage) {
+    Map<String, String> variables = new HashMap<>();
+    EmailMessageVariables.putClientGreetingVariables(
+        variables, client.getClientName(), senderName, customMessage);
+    variables.put("FILES_COUNT", String.valueOf(filesCount));
+
+    return emailTemplateService.processTemplate("client-documents", variables);
+  }
+
+  private NotificationChannel determineChannel(boolean sendEmail, boolean sendWhatsApp) {
+    if (sendEmail && sendWhatsApp) {
+      return NotificationChannel.BOTH;
+    } else if (sendEmail) {
+      return NotificationChannel.EMAIL;
+    } else if (sendWhatsApp) {
+      return NotificationChannel.WHATSAPP;
+    } else {
+      throw new NotificationException("Pelo menos um canal deve ser selecionado");
+    }
+  }
+
+  private String getChannelText(NotificationChannel channel) {
+    return switch (channel) {
+      case EMAIL -> "e-mail";
+      case WHATSAPP -> "WhatsApp";
+      case BOTH -> "e-mail e WhatsApp";
+    };
+  }
+}

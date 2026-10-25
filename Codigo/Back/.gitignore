@@ -1,0 +1,61 @@
+HELP.md
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+##.vscode/
+
+## environment variables ##
+.env
+.env.local
+
+### OS generated files ###
+*.pfx
+
+# Ignorar arquivos na pasta cert
+src/main/resources/cert/*.pfx
+
+### Certificates ###
+*.pem
+*.crt
+*.key
+*.pfx
+cert/
+*/resources/cert/*
+**/temp/*
+**/temp/google/*
+
+# Ignorar arquivos nas pastas tokens e credentials
+tokens/
+credentials/
+google/
+
+# Documentação
+*.rtf
